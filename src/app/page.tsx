@@ -83,12 +83,19 @@ export default function SafeSathiApp() {
     },
   ];
 
-  // Clean duplicate prefixes and colons that confuse TTS pronunciation
-  const cleanExplanationText = (text: string) => {
+  const cleanExplanationText = (text?: string) => {
+    if (!text || typeof text !== "string") return "";
     return text
       .replace(/^(High Danger|Suspicious|Safe|अत्यधिक गंभीर खतरा|धोखाधड़ी चेतावनी|चेतावनी|सावधान)[:\s-]*/i, "")
       .replace(/[:]/g, " ")
       .trim();
+  };
+
+  const fixHindiTtsPronunciation = (text: string) => {
+    if (!text) return "";
+    return text
+      .replace(/\bहैं\b/g, "hai")
+      .replace(/\bहै\b/g, "hai");
   };
 
   const startSpeaking = (textToRead: string, langToUse: "english" | "hindi") => {
@@ -100,7 +107,11 @@ export default function SafeSathiApp() {
         window.speechSynthesis.resume();
       }
 
-      const utterance = new SpeechSynthesisUtterance(textToRead);
+      const speechPayload = langToUse === "hindi" 
+        ? fixHindiTtsPronunciation(textToRead) 
+        : textToRead;
+
+      const utterance = new SpeechSynthesisUtterance(speechPayload);
       utterance.rate = 0.9;
       utterance.pitch = 1.0;
 
@@ -141,22 +152,32 @@ export default function SafeSathiApp() {
     }
   };
 
-  const buildAnnouncementString = (res: AnalysisResult, lang: "english" | "hindi") => {
-    const cleanedExp = cleanExplanationText(res.explanation);
-    const cleanedAction = res.safeAction.replace(/[:]/g, " ");
+  const buildAnnouncementString = (res?: AnalysisResult | null, lang?: "english" | "hindi") => {
+    const activeLang = lang || "english";
+    const defaultExp = activeLang === "hindi" 
+      ? "संदेश की सुरक्षा जांच पूरी हो गई है।" 
+      : "Safety verification completed.";
+    const defaultAction = activeLang === "hindi" 
+      ? "सतर्क रहें।" 
+      : "Stay alert.";
 
-    if (lang === "hindi") {
-      const verdictHindi = res.riskLevel === "High Danger" 
-        ? "अत्यधिक गंभीर खतरा है" 
-        : res.riskLevel === "Safe" 
-        ? "पूर्णतः सुरक्षित है" 
-        : "संदिग्ध है";
+    const rawExp = res?.explanation || defaultExp;
+    const rawAction = res?.safeAction || defaultAction;
 
-      // Phrased with natural Hindi SOV syntax so 'है' (hai) is pronounced clearly
-      return `सावधान! यह संदेश ${verdictHindi}। ${cleanedExp}। हमारी सलाह यह है कि ${cleanedAction}`;
+    const cleanedExp = cleanExplanationText(rawExp);
+    const cleanedAction = typeof rawAction === "string" ? rawAction.replace(/[:]/g, " ") : defaultAction;
+
+    if (activeLang === "hindi") {
+      const verdictHindi = res?.riskLevel === "High Danger" 
+        ? "अत्यधिक गंभीर खतरा" 
+        : res?.riskLevel === "Safe" 
+        ? "पूर्णतः सुरक्षित" 
+        : "संदिग्ध";
+
+      return `सावधान! जाँच का परिणाम ${verdictHindi} है। ${cleanedExp}। हमारी सलाह है कि ${cleanedAction}`;
     }
 
-    return `Alert! Verdict is ${res.riskLevel}. ${cleanedExp} Recommended action: ${cleanedAction}`;
+    return `Alert! Verdict is ${res?.riskLevel || "Analyzed"}. ${cleanedExp} Recommended action: ${cleanedAction}`;
   };
 
   const handleToggleSpeak = () => {
@@ -172,8 +193,9 @@ export default function SafeSathiApp() {
   };
 
   const handleAnalyze = async (textToTest?: string, currentLang?: "english" | "hindi") => {
-    const text = textToTest || message;
+    const text = textToTest !== undefined ? textToTest : message;
     const activeLang = currentLang || language;
+
     if (!text.trim()) return;
 
     if (typeof window !== "undefined" && window.speechSynthesis) {
@@ -193,7 +215,7 @@ export default function SafeSathiApp() {
       const data = await res.json();
       setResult(data);
 
-      if (data && data.explanation) {
+      if (data) {
         const announcement = buildAnnouncementString(data, activeLang);
         startSpeaking(announcement, activeLang);
       }
@@ -246,7 +268,7 @@ export default function SafeSathiApp() {
 
   return (
     <div className="min-h-screen bg-[#070B12] text-slate-100 font-sans selection:bg-amber-500 selection:text-black">
-      {/* Top Utility Announcement Bar */}
+      {/* Top Utility Bar (Clean Single Entries) */}
       <div className="bg-[#0D1527] border-b border-slate-800/80 px-4 py-2 text-xs text-slate-400">
         <div className="max-w-4xl mx-auto flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
@@ -260,7 +282,10 @@ export default function SafeSathiApp() {
           </div>
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1 text-slate-400">
-              <Lock size={12} className="text-emerald-400" /> Client-side Privacy (No Data Saved)
+              <Lock size={12} className="text-emerald-400" /> Ephemeral Processing (No Data Saved)
+            </span>
+            <span className="bg-amber-500/10 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded text-[10px] font-bold">
+              Chrome Extension Ready (Manifest V3)
             </span>
             <a 
               href="tel:1930" 
@@ -272,7 +297,7 @@ export default function SafeSathiApp() {
         </div>
       </div>
 
-      {/* Main Navigation Bar */}
+      {/* Main Header */}
       <header className="border-b border-slate-800 bg-[#0A101D]/90 backdrop-blur sticky top-0 z-30">
         <div className="max-w-4xl mx-auto px-4 py-3.5 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -287,7 +312,7 @@ export default function SafeSathiApp() {
                 </span>
               </div>
               <p className="text-[11px] text-slate-400 leading-none mt-0.5">
-                FinTech Fraud & Deception Defense for Senior Citizens
+                FinTech Fraud & Deception Defense for Digital Banking Users
               </p>
             </div>
           </div>
@@ -387,7 +412,7 @@ export default function SafeSathiApp() {
             <label className="text-sm font-semibold text-slate-200 flex items-center gap-2">
               <Radio size={16} className="text-amber-400" />
               {language === "hindi"
-                ? "संदिग्ध SMS, WhatsApp संदेश पेस्ट करें या बोलकर बताएं:"
+                ? "संदिग्ध SMS, WhatsApp संदेश यहाँ पेस्ट करें या बोलें:"
                 : "Paste suspicious message or speak via microphone:"}
             </label>
             {message && (
@@ -417,7 +442,7 @@ export default function SafeSathiApp() {
             <button
               onClick={handleVoiceInput}
               title={isListening ? "Listening... click to finish" : "Speak message"}
-              className={`absolute right-3 bottom-4 p-3 rounded-xl transition-all cursor-pointer shadow-md ${
+              className={`absolute right-3 bottom-4 p-2.5 rounded-xl transition-all cursor-pointer shadow-md ${
                 isListening
                   ? "bg-red-500 text-white animate-pulse"
                   : "bg-slate-800 text-slate-300 hover:text-amber-400 hover:bg-slate-700 border border-slate-600"
@@ -645,9 +670,9 @@ export default function SafeSathiApp() {
           </div>
         )}
 
-        {/* Footer Authority & Context */}
+        {/* Footer */}
         <footer className="text-center pt-6 pb-12 border-t border-slate-900 text-slate-500 text-xs space-y-1">
-          <p>SafeSathi • Assistive FinTech Cybersecurity Prototype for Senior Citizens</p>
+          <p>SafeSathi • FinTech Cybersecurity & Payment Fraud Triage</p>
           <p>Presented at SPIRIT 3.0 Buildathon, DSMNRU Lucknow • Built with Next.js, Groq & Web Speech</p>
         </footer>
       </main>
