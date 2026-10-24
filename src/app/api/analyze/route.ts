@@ -14,50 +14,67 @@ function runLocalSecurityRules(text: string) {
   let paymentScore = 0;
   let threatType: "electricity" | "bank" | "lottery" | "general" = "general";
 
-  // Check specific threat categories
-  if (/(electricity|power will be disconnected|power cut|bijli)/i.test(lower)) {
+  // 1. Identify Legitimate Transactional / Informational Patterns FIRST
+  const isLegitTxn = /(credited with|debited by|available balance|avail bal|txn of inr|out for delivery|delivered successfully|secret otp|otp for logging in|use otp)/i.test(lower);
+  const hasSuspiciousLink = /https?:\/\/|\.apk/i.test(lower);
+  const hasCoercion = /(power cut|disconnected|suspended|deactivated|block your account|immediately|tonight)/i.test(lower);
+
+  // If it's a standard bank notification without links or coercion, mark safe immediately
+  if (isLegitTxn && !hasSuspiciousLink && !hasCoercion) {
+    return {
+      flags: [],
+      threatType: "general" as const,
+      scores: { urgencyScore: 0, domainScore: 0, paymentScore: 0 },
+      isExplicitlySafe: true
+    };
+  }
+
+  // 2. Coercive Utility Disconnection Threat
+  if (/(electricity|power will be disconnected|power cut|bijli)/i.test(lower) && /(bill|pay|apk|tonight|immediately|update)/i.test(lower)) {
     threatType = "electricity";
     flags.push("Simulates utility power disconnection coercion.");
     urgencyScore = 95;
-  } else if (/(lottery|lucky draw|won ₹|kbc|prize money)/i.test(lower)) {
+  }
+
+  // 3. Fake Lottery / UPI Collect Traps
+  if (/(lottery|lucky draw|won ₹|kbc|prize money)/i.test(lower)) {
     threatType = "lottery";
     flags.push("Promises unrealistic lottery or prize rewards.");
     paymentScore = 90;
-  } else if (/(kyc|sbi|hdfc|icici|pan|account suspended|blocked|bank)/i.test(lower)) {
-    threatType = "bank";
-    flags.push("Impersonates banking institution or KYC deactivation.");
-    urgencyScore = Math.max(urgencyScore, 85);
   }
 
-  // APK download detection
-  if (/\.apk($|\s|\/)/i.test(lower)) {
-    flags.push("Suspicious Android package (.apk) file download detected.");
-    domainScore = 95;
-  }
-
-  // Suspicious Link detection
-  if (/(https?:\/\/)/i.test(lower) && /(verify|update|bill|pay|apk|sbi|kyc)/i.test(lower)) {
-    flags.push("Unverified third-party link requesting payment or credentials.");
-    domainScore = Math.max(domainScore, 90);
-  }
-
-  // UPI Collect Traps
   if (/(upi:\/\/pay|approve request|enter upi pin|collect request)/i.test(lower)) {
     flags.push("Deceptive UPI payment collect request detected.");
     paymentScore = 95;
   }
 
-  // Legitimate transaction check (no links, purely informative)
-  const isLegitTxn = /(credited with|debited by|available balance|avail bal|out for delivery|secret one time password|otp for logging)/i.test(lower);
-  const hasNoLinks = !/https?:\/\/|\.apk/i.test(lower);
-
-  if (isLegitTxn && hasNoLinks && flags.length === 0) {
-    urgencyScore = 0;
-    domainScore = 0;
-    paymentScore = 0;
+  // 4. Malicious APK Download Link
+  if (/\.apk($|\s|\/)/i.test(lower)) {
+    flags.push("Suspicious Android package (.apk) file download detected.");
+    domainScore = 95;
   }
 
-  return { flags, threatType, scores: { urgencyScore, domainScore, paymentScore } };
+  // 5. Phishing URLs with KYC / Bank / Suspension Coercion
+  if (/(https?:\/\/)/i.test(lower) && /(sbi|kyc|verify|update|pan|bank|apk|suspend)/i.test(lower)) {
+    threatType = "bank";
+    flags.push("Unverified third-party link requesting banking or KYC verification.");
+    domainScore = Math.max(domainScore, 90);
+    urgencyScore = Math.max(urgencyScore, 85);
+  }
+
+  // 6. Bank suspension threats WITHOUT legitimate transaction context
+  if (/(account suspended|deactivated|blocked)/i.test(lower) && /(sbi|hdfc|icici|bank|pan)/i.test(lower) && hasSuspiciousLink) {
+    threatType = "bank";
+    flags.push("Impersonates banking institution or KYC deactivation.");
+    urgencyScore = Math.max(urgencyScore, 85);
+  }
+
+  return {
+    flags,
+    threatType,
+    scores: { urgencyScore, domainScore, paymentScore },
+    isExplicitlySafe: false
+  };
 }
 
 export async function POST(req: NextRequest) {
@@ -73,15 +90,33 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Message content cannot be empty." }, { status: 400 });
     }
 
-    const { flags: ruleFlags, threatType, scores: baseScores } = runLocalSecurityRules(userMessage);
+    const { flags: ruleFlags, threatType, scores: baseScores, isExplicitlySafe } = runLocalSecurityRules(userMessage);
 
-    const systemPrompt = `You are SafeSathi (सेफसाथी), an AI FinTech scam triage advisor for senior citizens in India.
+    // Fast-path: Explicitly legitimate transactional message
+    if (isExplicitlySafe) {
+      return NextResponse.json({
+        riskLevel: "Safe",
+        isScam: false,
+        urgencyScore: 0,
+        domainScore: 0,
+        paymentScore: 0,
+        explanation: userLang === "hindi"
+          ? "यह एक सामान्य और वैध बैंकिंग या सूचना संदेश है। इसमें कोई फर्जी लिंक या ख़तरा नहीं है।"
+          : "This is a legitimate informational message. No suspicious links, APK downloads, or financial threats were detected.",
+        warningSigns: [],
+        safeAction: userLang === "hindi"
+          ? "कोई कार्रवाई की आवश्यकता नहीं है। यह संदेश सुरक्षित है।"
+          : "No action required. This message is safe."
+      });
+    }
+
+    const systemPrompt = `You are SafeSathi (सेफसाथी), an AI FinTech scam triage advisor for digital banking users in India.
 Analyze the provided message.
 Target Language: ${userLang === "hindi" ? "Hindi (written in clean Devanagari script)" : "Simple English (no tech jargon)"}.
 
-Guidelines:
-- Match the explanation specifically to the message topic (e.g. Electricity disconnection if about power, KYC Phishing if about bank, Lottery if about prize).
-- If it is a normal transactional credit or delivery alert without suspicious links, classify it as "Safe".
+Classification Guidelines:
+- If it is a normal transactional credit, debit, OTP, or courier alert WITHOUT suspicious links or threats, classify it as "Safe".
+- Only classify as "High Danger" if it asks to download an APK, click unverified KYC/PAN links, send money via UPI PIN, or threatens utility disconnection.
 
 Respond strictly in valid JSON matching this schema:
 {
@@ -91,7 +126,7 @@ Respond strictly in valid JSON matching this schema:
   "domainScore": number,
   "paymentScore": number,
   "explanation": "2 simple sentences explaining why this specific message is dangerous or safe.",
-  "warningSigns": ["list of red flags found"],
+  "warningSigns": ["list of red flags found, or empty array if safe"],
   "safeAction": "1 clear instruction on what the user should do right now."
 }`;
 
@@ -108,23 +143,18 @@ Respond strictly in valid JSON matching this schema:
     const raw = completion.choices[0]?.message?.content || "{}";
     const data = JSON.parse(raw);
 
-    const finalFlags = Array.from(new Set([...ruleFlags, ...(data.warningSigns || [])]));
-    const urgencyScore = Math.max(baseScores.urgencyScore, data.urgencyScore || 0);
-    const domainScore = Math.max(baseScores.domainScore, data.domainScore || 0);
-    const paymentScore = Math.max(baseScores.paymentScore, data.paymentScore || 0);
-
-    const isHighRisk = ruleFlags.length > 0 || domainScore >= 70 || urgencyScore >= 80 || paymentScore >= 80;
+    const isHighRisk = ruleFlags.length > 0 || (data.riskLevel === "High Danger");
     const finalRisk = isHighRisk ? "High Danger" : (data.riskLevel || "Safe");
 
     return NextResponse.json({
       riskLevel: finalRisk,
       isScam: finalRisk !== "Safe",
-      urgencyScore: finalRisk === "Safe" ? 0 : urgencyScore,
-      domainScore: finalRisk === "Safe" ? 0 : domainScore,
-      paymentScore: finalRisk === "Safe" ? 0 : paymentScore,
-      explanation: data.explanation,
-      warningSigns: finalRisk === "Safe" ? [] : finalFlags,
-      safeAction: data.safeAction
+      urgencyScore: finalRisk === "Safe" ? 0 : Math.max(baseScores.urgencyScore, data.urgencyScore || 0),
+      domainScore: finalRisk === "Safe" ? 0 : Math.max(baseScores.domainScore, data.domainScore || 0),
+      paymentScore: finalRisk === "Safe" ? 0 : Math.max(baseScores.paymentScore, data.paymentScore || 0),
+      explanation: data.explanation || (finalRisk === "Safe" ? "This message appears completely safe." : "Potential financial threat detected."),
+      warningSigns: finalRisk === "Safe" ? [] : Array.from(new Set([...ruleFlags, ...(data.warningSigns || [])])),
+      safeAction: data.safeAction || (finalRisk === "Safe" ? "No action required." : "Do not click any link or send money.")
     });
 
   } catch (err: any) {
@@ -133,8 +163,7 @@ Respond strictly in valid JSON matching this schema:
     const { flags: ruleFlags, threatType, scores } = runLocalSecurityRules(userMessage);
     const isHindi = userLang === "hindi";
 
-    // Safe fallback
-    if (ruleFlags.length === 0 && scores.domainScore === 0 && scores.urgencyScore === 0) {
+    if (ruleFlags.length === 0) {
       return NextResponse.json({
         riskLevel: "Safe",
         isScam: false,
@@ -151,31 +180,30 @@ Respond strictly in valid JSON matching this schema:
       });
     }
 
-    // Dynamic High Danger fallback based on specific threat type
     let fallbackExplanation = "";
     let fallbackAction = "";
 
     if (threatType === "electricity") {
       fallbackExplanation = isHindi
-        ? "अत्यधिक गंभीर खतरा: यह एक बिजली बिल का फर्जी संदेश है जिसमें कनेक्शन काटने का डर दिखाकर अनधिकृत ऐप डाउनलोड कराया जा रहा है।"
+        ? "अत्यधिक गंभीर खतरा: यह बिजली बिल का फर्जी संदेश है जिसमें कनेक्शन काटने का डर दिखाकर अनधिकृत APK डाउनलोड कराया जा रहा है।"
         : "High Danger: This is a fake electricity disconnection alert designed to force you into installing a malicious APK file.";
       fallbackAction = isHindi
-        ? "किसी भी लिंक या APK को डाउनलोड न करें। बिजली बिल की जांच केवल आधिकारिक डिस्कॉम कार्यालय या पोर्टल पर करें।"
-        : "Do not install the APK or tap the link. Verify your electricity bill only through your official electricity board.";
+        ? "किसी भी लिंक या APK को डाउनलोड न करें।"
+        : "Do not install the APK or tap the link.";
     } else if (threatType === "lottery") {
       fallbackExplanation = isHindi
-        ? "धोखाधड़ी चेतावनी: यह एक फर्जी लॉटरी और पुरस्कार घोटाला है जो प्रोसेसिंग शुल्क के नाम पर यूपीआई से पैसे निकालने की कोशिश करता है।"
+        ? "धोखाधड़ी चेतावनी: यह एक फर्जी लॉटरी घोटाला है जो UPI से पैसे निकालने की कोशिश करता है।"
         : "High Danger: This is a fraudulent lottery scam attempting to trick you into approving a UPI collect request.";
       fallbackAction = isHindi
-        ? "कोई भी UPI पिन दर्ज न करें और न ही रिक्वेस्ट स्वीकार करें। पुरस्कार प्राप्त करने के लिए कभी पिन नहीं डालना होता।"
-        : "Never enter your UPI PIN. Entering a PIN always sends money, it never receives money.";
+        ? "कोई भी UPI पिन दर्ज न करें।"
+        : "Never enter your UPI PIN.";
     } else {
       fallbackExplanation = isHindi
-        ? "अत्यधिक गंभीर खतरा: इस संदेश में फर्जी बैंक केवाईसी नवीनीकरण या खाता बंद होने की धमकी देकर संवेदनशील जानकारी मांगी जा रही है।"
+        ? "अत्यधिक गंभीर खतरा: इस संदेश में फर्जी बैंक या खाता बंद होने की धमकी देकर संवेदनशील जानकारी मांगी जा रही है।"
         : "High Danger: This message impersonates a bank or service provider to steal your credentials via an unverified link.";
       fallbackAction = isHindi
-        ? "किसी भी लिंक पर क्लिक न करें और न ही पैन/ओटीपी साझा करें। बैंक कभी SMS पर ऐसे लिंक नहीं भेजते।"
-        : "Do not tap on the link or provide credentials. Legitimate banks never suspend accounts via unverified SMS links.";
+        ? "किसी भी लिंक पर क्लिक न करें।"
+        : "Do not tap on the link or provide credentials.";
     }
 
     return NextResponse.json({
