@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {
+      width: 320px;
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #070B12;
+      color: #f8fafc;
+      padding: 14px;
+      margin: 0;
+    }
+    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    h3 { margin: 0; color: #f59e0b; font-size: 15px; font-weight: 800; display: flex; align-items: center; gap: 6px; }
+    .badge { font-size: 10px; background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); padding: 2px 6px; border-radius: 999px; font-weight: 600; }
+    p.sub { font-size: 11px; color: #94a3b8; margin: 0 0 12px 0; line-height: 1.4; }
+    button.scan-btn {
+      width: 100%;
+      background: linear-gradient(135deg, #f59e0b, #d97706);
+      color: #030712;
+      font-weight: 800;
+      border: none;
+      padding: 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      transition: all 0.2s;
+    }
+    button.scan-btn:hover { background: #fbbf24; }
+    #result { margin-top: 12px; display: none; padding: 12px; border-radius: 10px; font-size: 12px; }
+    .danger { background: rgba(127, 29, 29, 0.3); border: 1px solid rgba(239, 68, 68, 0.5); }
+    .safe { background: rgba(6, 78, 59, 0.3); border: 1px solid rgba(34, 197, 94, 0.5); }
+    .radar { margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.1); font-size: 11px; color: #cbd5e1; display: flex; justify-content: space-between; }
+    .helpline { margin-top: 10px; background: #b91c1c; color: white; padding: 6px 10px; border-radius: 6px; font-weight: 700; text-align: center; font-size: 11px; display: block; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h3>🛡️ SafeSathi Shield</h3>
+    <span class="badge">Client-Side AI</span>
+  </div>
+  <p class="sub">Active Tab Pre-Click Perimeter Guard. Zero data leaves your computer.</p>
+  
+  <button id="scanBtn" class="scan-btn">⚡ Inspect Current Screen</button>
+
+  <div id="result">
+    <div id="verdict" style="font-weight: 800; font-size: 13px; margin-bottom: 4px;"></div>
+    <div id="explanation" style="line-height: 1.4; color: #e2e8f0;"></div>
+    <div id="radar" class="radar"></div>
+    <a href="tel:1930" id="helplineBtn" class="helpline" style="display: none;">🚨 Dial 1930 Cyber Helpline</a>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
